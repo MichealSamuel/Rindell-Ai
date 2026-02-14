@@ -1,6 +1,6 @@
 /**
  * ╔═══════════════════════════════════════════════════════════╗
- * ║              🤖 RINDELL AI ASSISTANT v1.0                 ║
+ * ║              🤖 RINDELL AI ASSISTANT v5.0                 ║
  * ╚═══════════════════════════════════════════════════════════╝
  */
 
@@ -168,17 +168,12 @@ class FileManager {
 class MessageHandler {
   static async process(sock, msg) {
     try {
-      // ✅ CRITICAL: Ignore invalid/corrupted messages
       if (!msg.message) return
       if (msg.key.fromMe) return
       if (msg.key.remoteJid === 'status@broadcast') return
       if (msg.key.remoteJid?.includes('broadcast')) return
-      
-      // ✅ IGNORE stub messages (session cleanup messages)
       if (msg.messageStubType) return
       if (msg.messageStubParameters) return
-      
-      // ✅ ONLY process actual document messages
       if (!msg.message.documentMessage) return
 
       const doc = msg.message.documentMessage
@@ -250,15 +245,45 @@ class MessageHandler {
         const processingTime = ((Date.now() - startTime) / 1000).toFixed(1)
         Logger.success(`Make.com responded in ${processingTime}s`)
 
-        if (response.data && response.data.summary) {
-          Logger.ai('AI analysis received')
+        // ✅ FLEXIBLE RESPONSE HANDLING - Works with ANY Make.com format
+        let summary = null
+        
+        Logger.info('Extracting summary from response...')
+        
+        if (typeof response.data === 'string') {
+          // Response is plain text
+          summary = response.data
+          Logger.info('Format: Plain text')
+        } else if (response.data && typeof response.data === 'object') {
+          // Response is JSON - try common field names
+          summary = response.data.summary || 
+                    response.data.Body || 
+                    response.data.text || 
+                    response.data.content ||
+                    response.data.message ||
+                    response.data.result
           
+          if (summary) {
+            Logger.info('Format: JSON object')
+          } else {
+            // If none of the common fields exist, stringify entire response
+            summary = JSON.stringify(response.data, null, 2)
+            Logger.warn('Using entire response (no standard field found)')
+          }
+        }
+
+        if (summary && summary.length > 10) {
+          Logger.ai('AI analysis received')
+          Logger.success(`Summary length: ${summary.length} characters`)
+          
+          // Send summary to YOUR WhatsApp
           Logger.processing('Sending summary to your WhatsApp')
           await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
-            text: this.formatSummary(response.data, fileName, from, fileSize)
+            text: this.formatSummary({ summary }, fileName, from, fileSize)
           })
           Logger.success('Summary sent to you')
 
+          // Send confirmation to user
           Logger.processing('Sending completion message to user')
           await sock.sendMessage(from, {
             text: `✅ *Analysis Complete!*\n\n` +
@@ -269,11 +294,22 @@ class MessageHandler {
           Logger.success('Completion message sent')
 
         } else {
-          Logger.warn('No summary in response', response.data)
+          Logger.warn('No valid summary found in response')
+          Logger.info('Response type:', typeof response.data)
+          Logger.info('Response preview:', JSON.stringify(response.data).substring(0, 200))
           
           await sock.sendMessage(from, {
-            text: '⚠️ Analysis completed but no summary was generated.\n' +
+            text: '⚠️ Analysis completed but summary extraction failed.\n' +
                   'Please try again or contact support.'
+          })
+          
+          // Send debug info to you
+          await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
+            text: `⚠️ *Summary Extraction Failed*\n\n` +
+                  `📄 ${fileName}\n` +
+                  `👤 From: ${from}\n\n` +
+                  `Response type: ${typeof response.data}\n` +
+                  `Response: ${JSON.stringify(response.data, null, 2).substring(0, 500)}`
           })
         }
 
@@ -407,7 +443,6 @@ class ConnectionHandler {
    WHATSAPP CLIENT
    ═══════════════════════════════════════════════════════════ */
 
-// ✅ SILENT LOGGER - No Baileys spam
 const logger = pino({ level: 'silent' })
 let sock
 let isConnected = false
@@ -425,37 +460,23 @@ async function startBot() {
 
     sock = makeWASocket({
       auth: state,
-      logger,  // ✅ Silent logger
+      logger,
       syncFullHistory: false,
       markOnlineOnConnect: false,
       getMessage: async () => undefined,
       browser: ['Rindell AI', 'Chrome', '120.0'],
-      
-      // ✅ CRITICAL: Ignore problematic jids
-      shouldIgnoreJid: (jid) => {
-        return jid === 'status@broadcast' || jid?.includes('broadcast')
-      },
-      
+      shouldIgnoreJid: (jid) => jid === 'status@broadcast' || jid?.includes('broadcast'),
       defaultQueryTimeoutMs: 60000,
       connectTimeoutMs: 60000,
       keepAliveIntervalMs: 30000,
-      
-      // ✅ Don't emit own events
       emitOwnEvents: false,
-      
-      // ✅ Don't fire initial queries
       fireInitQueries: false
     })
 
-    // ✅ Save credentials silently
     sock.ev.on('creds.update', saveCreds)
+    sock.ev.on('connection.update', (update) => ConnectionHandler.handleUpdate(sock, update))
 
-    // Connection updates
-    sock.ev.on('connection.update', (update) => {
-      ConnectionHandler.handleUpdate(sock, update)
-    })
-
-    // ✅ IGNORE all sync events (prevents spam)
+    // Ignore sync events
     sock.ev.on('messaging-history.set', () => {})
     sock.ev.on('chats.set', () => {})
     sock.ev.on('chats.upsert', () => {})
@@ -463,16 +484,13 @@ async function startBot() {
     sock.ev.on('contacts.upsert', () => {})
     sock.ev.on('groups.upsert', () => {})
 
-    // ✅ CRITICAL: Only process NEW, VALID messages
+    // Handle incoming messages
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
-      // Only process new messages
       if (type !== 'notify') return
       if (!isConnected) return
 
       const msg = messages[0]
       if (!msg) return
-      
-      // ✅ IGNORE stub/system messages
       if (msg.messageStubType) return
       if (!msg.message) return
 
@@ -480,10 +498,7 @@ async function startBot() {
     })
 
   } catch (error) {
-    Logger.error('Bot initialization failed', {
-      error: error.message
-    })
-    
+    Logger.error('Bot initialization failed', { error: error.message })
     setTimeout(() => {
       Logger.processing('Retrying in 5 seconds...')
       startBot()
@@ -496,13 +511,11 @@ async function startBot() {
    ═══════════════════════════════════════════════════════════ */
 
 process.on('uncaughtException', (error) => {
-  // ✅ Silent - don't spam console
   if (error.message.includes('Decrypted message')) return
   Logger.error('Uncaught Exception', { error: error.message })
 })
 
 process.on('unhandledRejection', (reason) => {
-  // ✅ Silent - don't spam console
   if (reason?.toString().includes('Decrypted message')) return
   Logger.error('Unhandled Rejection', { reason })
 })
@@ -524,7 +537,7 @@ process.on('SIGINT', async () => {
   process.exit(0)
 })
 
-process.on('SIGTERM', async () => {
+process.on('SIGTERM', () => {
   Logger.info('SIGTERM received')
   process.exit(0)
 })
