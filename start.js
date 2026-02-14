@@ -37,7 +37,18 @@ const SPAM_PATTERNS = [
   'Closing open session',
   'prekey bundle',
   'BQ0L',
-  'favor of incoming'
+  'favor of incoming',
+  'Failed to decrypt message',
+  'Session error:Error',
+  'Bad MAC Error',
+  'verifyMAC',
+  'doDecryptWhisperMessage',
+  'decryptWithSessions',
+  'at async',
+  'at Object.verifyMAC',
+  'SessionCipher',
+  '_asyncQueueExecutor',
+  'libsignal'
 ]
 
 function shouldFilter(line) {
@@ -48,9 +59,8 @@ function shouldFilter(line) {
     return true
   }
   
-  // Filter standalone brackets/braces (JSON noise)
-  if (trimmed === '}' || 
-      trimmed === '},') {
+  // Filter standalone brackets/braces
+  if (trimmed === '}' || trimmed === '},') {
     return true
   }
   
