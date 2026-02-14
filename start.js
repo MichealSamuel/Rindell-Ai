@@ -6,7 +6,7 @@
 
 const { spawn } = require('child_process')
 
-// List of spam patterns to filter
+// Comprehensive spam patterns to filter
 const SPAM_PATTERNS = [
   'Decrypted message',
   'Closing session',
@@ -16,12 +16,28 @@ const SPAM_PATTERNS = [
   'currentRatchet',
   'ephemeralKeyPair',
   'Buffer 05',
+  'Buffer a0',
+  'Buffer <Buffer',
   'baseKey',
   'indexInfo',
   'pendingPreKey',
   'lastRemoteEphemeralKey',
   'previousCounter',
-  'rootKey'
+  'rootKey',
+  'chainKey',
+  'chainType',
+  'messageKeys',
+  'privKey',
+  'pubKey',
+  'signedKeyId',
+  'preKeyId',
+  'closed:',
+  'used:',
+  'created:',
+  'Closing open session',
+  'prekey bundle',
+  'BQ0L', // Session identifiers
+  'favor of incoming'
 ]
 
 function shouldFilter(line) {
@@ -55,16 +71,20 @@ bot.stdout.on('data', (data) => {
 
 bot.stderr.on('data', (data) => {
   const output = data.toString()
-  if (!shouldFilter(output)) {
-    process.stderr.write(output)
-  }
+  const lines = output.split('\n')
+  
+  lines.forEach(line => {
+    if (!shouldFilter(line) && line.trim()) {
+      process.stderr.write(line + '\n')
+    }
+  })
 })
 
 bot.on('close', (code) => {
-  if (code !== 0) {
+  if (code !== 0 && code !== null) {
     console.log(`\n⚠️  Bot exited with code ${code}`)
   }
-  process.exit(code)
+  process.exit(code || 0)
 })
 
 process.on('SIGINT', () => {
@@ -75,4 +95,5 @@ process.on('SIGINT', () => {
 
 process.on('SIGTERM', () => {
   bot.kill('SIGTERM')
+  setTimeout(() => process.exit(0), 1000)
 })
