@@ -8,7 +8,8 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   downloadContentFromMessage,
-  DisconnectReason
+  DisconnectReason,
+  makeInMemoryStore
 } = require('@whiskeysockets/baileys')
 
 const { Boom } = require('@hapi/boom')
@@ -20,37 +21,11 @@ const qrcode = require('qrcode-terminal')
 const pino = require('pino')
 
 /* ═══════════════════════════════════════════════════════════
-   SUPPRESS BAILEYS CONSOLE SPAM
-   ═══════════════════════════════════════════════════════════ */
-
-// Override console.log to filter Baileys spam
-const originalConsoleLog = console.log
-const originalConsoleError = console.error
-
-console.log = function(...args) {
-  const msg = args.join(' ')
-  if (msg.includes('Decrypted message') || 
-      msg.includes('Closing session') ||
-      msg.includes('SessionEntry')) {
-    return // Ignore spam
-  }
-  originalConsoleLog.apply(console, args)
-}
-
-console.error = function(...args) {
-  const msg = args.join(' ')
-  if (msg.includes('Decrypted message') || 
-      msg.includes('Closing session')) {
-    return // Ignore spam
-  }
-  originalConsoleError.apply(console, args)
-}
-
-/* ═══════════════════════════════════════════════════════════
    CONFIGURATION
    ═══════════════════════════════════════════════════════════ */
 
 const CONFIG = {
+  VERSION: '5.0',
   ASSISTANT_NUMBER: '2349167066476@c.us',
   MAKE_WEBHOOK_URL: 'https://hook.eu2.make.com/2uyff0akin8p1jlkp527qu9tffr45887',
   WEBHOOK_TIMEOUT: 120000,
@@ -106,10 +81,10 @@ class Logger {
     const colorCode = this.colors[color] || this.colors.reset
     const resetCode = this.colors.reset
     
-    originalConsoleLog(`${this.colors.dim}[${time}]${resetCode} ${colorCode}${icon} ${message}${resetCode}`)
+    console.log(`${this.colors.dim}[${time}]${resetCode} ${colorCode}${icon} ${message}${resetCode}`)
     
     if (data) {
-      originalConsoleLog(`${this.colors.dim}   ${JSON.stringify(data, null, 2)}${resetCode}`)
+      console.log(`${this.colors.dim}   ${JSON.stringify(data, null, 2)}${resetCode}`)
     }
 
     this.ensureLogDir()
@@ -118,15 +93,8 @@ class Logger {
     fs.appendFileSync(logFile, logEntry)
   }
 
-  static header(text) {
-    const line = '═'.repeat(60)
-    originalConsoleLog(`\n${this.colors.cyan}${this.colors.bright}╔${line}╗${this.colors.reset}`)
-    originalConsoleLog(`${this.colors.cyan}${this.colors.bright}║${text.padStart(31 + text.length / 2).padEnd(60)}║${this.colors.reset}`)
-    originalConsoleLog(`${this.colors.cyan}${this.colors.bright}╚${line}╝${this.colors.reset}\n`)
-  }
-
   static divider() {
-    originalConsoleLog(`${this.colors.dim}${'─'.repeat(60)}${this.colors.reset}`)
+    console.log(`${this.colors.dim}${'─'.repeat(60)}${this.colors.reset}`)
   }
 
   static success(message, data) { this.log('✅', 'green', message, data) }
@@ -176,11 +144,9 @@ class FileManager {
     try {
       const stream = await downloadContentFromMessage(message, messageType)
       let buffer = Buffer.from([])
-
       for await (const chunk of stream) {
         buffer = Buffer.concat([buffer, chunk])
       }
-
       return buffer
     } catch (error) {
       throw new Error(`Media download failed: ${error.message}`)
@@ -195,12 +161,11 @@ class FileManager {
 class MessageHandler {
   static async process(sock, msg) {
     try {
-      if (!msg.message) return
+      if (!msg?.message) return
       if (msg.key.fromMe) return
       if (msg.key.remoteJid === 'status@broadcast') return
       if (msg.key.remoteJid?.includes('broadcast')) return
       if (msg.messageStubType) return
-      if (msg.messageStubParameters) return
       if (!msg.message.documentMessage) return
 
       const doc = msg.message.documentMessage
@@ -211,13 +176,12 @@ class MessageHandler {
       Logger.divider()
       Logger.document('NEW DOCUMENT RECEIVED', {
         fileName,
-        from,
+        from: from.split('@')[0],
         type: FileManager.getFileTypeName(mimeType)
       })
 
       if (!FileManager.isSupported(mimeType)) {
         Logger.warn('Unsupported file type', { mimeType })
-        
         await sock.sendMessage(from, {
           text: '⚠️ Sorry, this file type is not supported yet.\n\n' +
                 'Supported types:\n' +
@@ -226,7 +190,6 @@ class MessageHandler {
                 '• PowerPoint Presentations\n' +
                 '• Excel Spreadsheets'
         })
-        
         return
       }
 
@@ -250,10 +213,7 @@ class MessageHandler {
 
       Logger.network('Sending to Make.com webhook')
       const form = new FormData()
-      form.append('file', buffer, {
-        filename: fileName,
-        contentType: mimeType
-      })
+      form.append('file', buffer, { filename: fileName, contentType: mimeType })
       form.append('filename', fileName)
       form.append('mimeType', mimeType)
       form.append('source', from)
@@ -274,8 +234,6 @@ class MessageHandler {
 
         let summary = null
         
-        Logger.info('Extracting summary from response...')
-        
         if (typeof response.data === 'string') {
           summary = response.data
           Logger.info('Format: Plain text')
@@ -291,13 +249,12 @@ class MessageHandler {
             Logger.info('Format: JSON object')
           } else {
             summary = JSON.stringify(response.data, null, 2)
-            Logger.warn('Using entire response (no standard field found)')
+            Logger.warn('Using entire response')
           }
         }
 
         if (summary && summary.length > 10) {
-          Logger.ai('AI analysis received')
-          Logger.success(`Summary length: ${summary.length} characters`)
+          Logger.ai(`AI analysis received (${summary.length} chars)`)
           
           Logger.processing('Sending summary to your WhatsApp')
           await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
@@ -315,50 +272,27 @@ class MessageHandler {
           Logger.success('Completion message sent')
 
         } else {
-          Logger.warn('No valid summary found in response')
-          Logger.info('Response type:', typeof response.data)
-          Logger.info('Response preview:', JSON.stringify(response.data).substring(0, 200))
-          
+          Logger.warn('No valid summary found')
           await sock.sendMessage(from, {
             text: '⚠️ Analysis completed but summary extraction failed.\n' +
                   'Please try again or contact support.'
           })
-          
-          await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
-            text: `⚠️ *Summary Extraction Failed*\n\n` +
-                  `📄 ${fileName}\n` +
-                  `👤 From: ${from}\n\n` +
-                  `Response type: ${typeof response.data}\n` +
-                  `Response: ${JSON.stringify(response.data, null, 2).substring(0, 500)}`
-          })
         }
 
       } catch (webhookError) {
-        Logger.error('Make.com webhook failed', {
-          error: webhookError.message,
-          timeout: webhookError.code === 'ECONNABORTED'
-        })
-
+        Logger.error('Make.com webhook failed', { error: webhookError.message })
         await sock.sendMessage(from, {
-          text: '❌ *Processing Error*\n\n' +
-                'Sorry, there was an error analyzing your document.\n' +
-                'Please try again in a moment.'
+          text: '❌ *Processing Error*\n\nSorry, there was an error analyzing your document.\nPlease try again.'
         })
-
         await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
-          text: `❌ *Processing Error*\n\n` +
-                `📄 ${fileName}\n` +
-                `👤 From: ${from}\n` +
-                `⚠️ Error: ${webhookError.message}`
+          text: `❌ *Error*\n📄 ${fileName}\n👤 ${from}\n⚠️ ${webhookError.message}`
         })
       }
 
       Logger.divider()
 
     } catch (error) {
-      Logger.error('Message processing failed', {
-        error: error.message
-      })
+      Logger.error('Message processing failed', { error: error.message })
     }
   }
 
@@ -371,8 +305,7 @@ class MessageHandler {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - Name: ${fileName}
 - Size: ${fileSize}
-- From: ${from}
-- Status: ${data.status || 'Analyzed'}
+- From: ${from.split('@')[0]}
 - Time: ${new Date().toLocaleString()}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -380,82 +313,8 @@ class MessageHandler {
 ${data.summary}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ *Powered by Rindell AI*
+✅ *Powered by Rindell AI v${CONFIG.VERSION}*
 🤖 Analysis by Claude via Make.com`
-  }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   CONNECTION HANDLER
-   ═══════════════════════════════════════════════════════════ */
-
-class ConnectionHandler {
-  static async handleUpdate(sock, update) {
-    const { connection, lastDisconnect, qr, isNewLogin } = update
-
-    if (qr) {
-      Logger.header('SCAN QR CODE WITH WHATSAPP')
-      qrcode.generate(qr, { small: true })
-      Logger.info('QR code expires in 30 seconds')
-    }
-
-    if (connection === 'connecting') {
-      Logger.processing('Connecting to WhatsApp...')
-    }
-
-    if (connection === 'open') {
-      isConnected = true
-      reconnectAttempts = 0
-      
-      Logger.header('RINDELL AI ASSISTANT READY')
-      Logger.success('WhatsApp connected successfully')
-      
-      if (isNewLogin) {
-        Logger.info('New device linked to WhatsApp')
-      } else {
-        Logger.info('Reconnected using saved session')
-      }
-      
-      Logger.divider()
-      Logger.info('Supported file types:', Object.values(CONFIG.SUPPORTED_TYPES))
-      Logger.info(`Summaries will be sent to: ${CONFIG.ASSISTANT_NUMBER}`)
-      Logger.divider()
-      Logger.success('Bot is now listening for documents...')
-      Logger.divider()
-
-      await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
-        text: `🤖 *Rindell AI Assistant Started*\n\n` +
-              `✅ Connected to WhatsApp\n` +
-              `🕐 ${new Date().toLocaleString()}\n\n` +
-              `Ready to process documents! 📄`
-      }).catch(() => {})
-    }
-
-    if (connection === 'close') {
-      isConnected = false
-      
-      const statusCode = (lastDisconnect?.error instanceof Boom)
-        ? lastDisconnect.error.output?.statusCode
-        : 500
-
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut
-
-      Logger.warn('Connection closed', {
-        code: statusCode,
-        willReconnect: shouldReconnect
-      })
-
-      if (shouldReconnect) {
-        reconnectAttempts++
-        const delay = Math.min(5000 * reconnectAttempts, 30000)
-        
-        Logger.processing(`Reconnecting in ${delay / 1000}s... (Attempt ${reconnectAttempts})`)
-        setTimeout(() => startBot(), delay)
-      } else {
-        Logger.error('Logged out - Manual restart required')
-        Logger.info('Delete auth/ folder and restart to reconnect')
-      }
-    }
   }
 }
 
@@ -481,6 +340,7 @@ async function startBot() {
     sock = makeWASocket({
       auth: state,
       logger,
+      printQRInTerminal: false,
       syncFullHistory: false,
       markOnlineOnConnect: false,
       getMessage: async () => undefined,
@@ -490,37 +350,83 @@ async function startBot() {
       connectTimeoutMs: 60000,
       keepAliveIntervalMs: 30000,
       emitOwnEvents: false,
-      fireInitQueries: false
+      fireInitQueries: false,
+      generateHighQualityLinkPreview: false
     })
 
     sock.ev.on('creds.update', saveCreds)
-    sock.ev.on('connection.update', (update) => ConnectionHandler.handleUpdate(sock, update))
 
-    sock.ev.on('messaging-history.set', () => {})
-    sock.ev.on('chats.set', () => {})
-    sock.ev.on('chats.upsert', () => {})
-    sock.ev.on('contacts.set', () => {})
-    sock.ev.on('contacts.upsert', () => {})
-    sock.ev.on('groups.upsert', () => {})
+    sock.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect, qr, isNewLogin } = update
+
+      if (qr) {
+        Logger.divider()
+        Logger.info('QR Code Ready - Scan with WhatsApp')
+        Logger.divider()
+        qrcode.generate(qr, { small: true })
+        Logger.info('QR code expires in 30 seconds')
+        Logger.divider()
+      }
+
+      if (connection === 'connecting') {
+        Logger.processing('Connecting to WhatsApp...')
+      }
+
+      if (connection === 'open') {
+        isConnected = true
+        reconnectAttempts = 0
+        
+        Logger.divider()
+        Logger.success('WhatsApp connected successfully!')
+        Logger.info(isNewLogin ? 'New device linked' : 'Reconnected with saved session')
+        Logger.info(`Version: ${CONFIG.VERSION}`)
+        Logger.info(`Summaries sent to: ${CONFIG.ASSISTANT_NUMBER}`)
+        Logger.success('Bot is now listening for documents...')
+        Logger.divider()
+
+        await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
+          text: `🤖 *Rindell AI v${CONFIG.VERSION} Started*\n\n` +
+                `✅ Connected to WhatsApp\n` +
+                `🕐 ${new Date().toLocaleString()}\n\n` +
+                `Ready to process documents! 📄`
+        }).catch(() => {})
+      }
+
+      if (connection === 'close') {
+        isConnected = false
+        const statusCode = (lastDisconnect?.error instanceof Boom)
+          ? lastDisconnect.error.output?.statusCode
+          : 500
+
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut
+
+        if (shouldReconnect) {
+          reconnectAttempts++
+          const delay = Math.min(5000 * reconnectAttempts, 30000)
+          Logger.processing(`Reconnecting in ${delay / 1000}s... (Attempt ${reconnectAttempts})`)
+          setTimeout(() => startBot(), delay)
+        } else {
+          Logger.error('Logged out - Restart required')
+          Logger.info('Delete auth/ folder and restart')
+        }
+      }
+    })
+
+    // Ignore all sync events
+    ;['messaging-history.set', 'chats.set', 'chats.upsert', 'contacts.set', 'contacts.upsert', 'groups.upsert'].forEach(event => {
+      sock.ev.on(event, () => {})
+    })
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
-      if (type !== 'notify') return
-      if (!isConnected) return
-
+      if (type !== 'notify' || !isConnected) return
       const msg = messages[0]
-      if (!msg) return
-      if (msg.messageStubType) return
-      if (!msg.message) return
-
+      if (!msg || msg.messageStubType || !msg.message) return
       await MessageHandler.process(sock, msg)
     })
 
   } catch (error) {
     Logger.error('Bot initialization failed', { error: error.message })
-    setTimeout(() => {
-      Logger.processing('Retrying in 5 seconds...')
-      startBot()
-    }, 5000)
+    setTimeout(() => startBot(), 5000)
   }
 }
 
@@ -528,27 +434,17 @@ async function startBot() {
    PROCESS HANDLERS
    ═══════════════════════════════════════════════════════════ */
 
-process.on('uncaughtException', (error) => {
-  if (error.message?.includes('Decrypted message')) return
-  if (error.message?.includes('Closing session')) return
-  Logger.error('Uncaught Exception', { error: error.message })
-})
-
-process.on('unhandledRejection', (reason) => {
-  const msg = reason?.toString() || ''
-  if (msg.includes('Decrypted message')) return
-  if (msg.includes('Closing session')) return
-  Logger.error('Unhandled Rejection', { reason })
-})
+process.on('uncaughtException', () => {}) // Silent
+process.on('unhandledRejection', () => {}) // Silent
 
 process.on('SIGINT', async () => {
-  Logger.header('SHUTTING DOWN')
+  Logger.divider()
   Logger.info('Graceful shutdown initiated')
   
   if (sock && isConnected) {
     try {
       await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
-        text: '🛑 *Rindell AI Assistant Stopped*\n\n' +
+        text: `🛑 *Rindell AI v${CONFIG.VERSION} Stopped*\n\n` +
               `Session ended at ${new Date().toLocaleString()}`
       })
     } catch (err) {}
@@ -558,17 +454,10 @@ process.on('SIGINT', async () => {
   process.exit(0)
 })
 
-process.on('SIGTERM', () => {
-  Logger.info('SIGTERM received')
-  process.exit(0)
-})
-
 /* ═══════════════════════════════════════════════════════════
-   START THE BOT
+   START
    ═══════════════════════════════════════════════════════════ */
 
-Logger.header('🤖 RINDELL AI ASSISTANT v1.0')
-Logger.info('Initializing WhatsApp Document Analysis Bot...')
+Logger.info(`Initializing Rindell AI Assistant v${CONFIG.VERSION}...`)
 Logger.divider()
-
 startBot()

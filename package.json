@@ -1,13 +1,23 @@
 {
   "name": "rindell-ai-assistant",
-  "version": "1.0.0",
-  "description": "Rindell AI - WhatsApp Document Analysis Assistant",
+  "version": "5.0.0",
+  "description": "Rindell AI v5.0 - WhatsApp Document Analysis Assistant",
   "main": "start.js",
   "scripts": {
     "start": "node start.js",
     "dev": "nodemon start.js",
     "direct": "node index.js"
   },
+  "keywords": [
+    "whatsapp",
+    "ai",
+    "document-analysis",
+    "claude",
+    "automation",
+    "rindell"
+  ],
+  "author": "Rindell AI",
+  "license": "MIT",
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.8",
     "@hapi/boom": "^10.0.1",
@@ -15,5 +25,11 @@
     "qrcode-terminal": "^0.12.0",
     "axios": "^1.6.7",
     "form-data": "^4.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
