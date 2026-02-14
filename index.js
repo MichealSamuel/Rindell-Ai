@@ -20,6 +20,33 @@ const qrcode = require('qrcode-terminal')
 const pino = require('pino')
 
 /* ═══════════════════════════════════════════════════════════
+   SUPPRESS BAILEYS CONSOLE SPAM
+   ═══════════════════════════════════════════════════════════ */
+
+// Override console.log to filter Baileys spam
+const originalConsoleLog = console.log
+const originalConsoleError = console.error
+
+console.log = function(...args) {
+  const msg = args.join(' ')
+  if (msg.includes('Decrypted message') || 
+      msg.includes('Closing session') ||
+      msg.includes('SessionEntry')) {
+    return // Ignore spam
+  }
+  originalConsoleLog.apply(console, args)
+}
+
+console.error = function(...args) {
+  const msg = args.join(' ')
+  if (msg.includes('Decrypted message') || 
+      msg.includes('Closing session')) {
+    return // Ignore spam
+  }
+  originalConsoleError.apply(console, args)
+}
+
+/* ═══════════════════════════════════════════════════════════
    CONFIGURATION
    ═══════════════════════════════════════════════════════════ */
 
@@ -79,10 +106,10 @@ class Logger {
     const colorCode = this.colors[color] || this.colors.reset
     const resetCode = this.colors.reset
     
-    console.log(`${this.colors.dim}[${time}]${resetCode} ${colorCode}${icon} ${message}${resetCode}`)
+    originalConsoleLog(`${this.colors.dim}[${time}]${resetCode} ${colorCode}${icon} ${message}${resetCode}`)
     
     if (data) {
-      console.log(`${this.colors.dim}   ${JSON.stringify(data, null, 2)}${resetCode}`)
+      originalConsoleLog(`${this.colors.dim}   ${JSON.stringify(data, null, 2)}${resetCode}`)
     }
 
     this.ensureLogDir()
@@ -93,13 +120,13 @@ class Logger {
 
   static header(text) {
     const line = '═'.repeat(60)
-    console.log(`\n${this.colors.cyan}${this.colors.bright}╔${line}╗${this.colors.reset}`)
-    console.log(`${this.colors.cyan}${this.colors.bright}║${text.padStart(31 + text.length / 2).padEnd(60)}║${this.colors.reset}`)
-    console.log(`${this.colors.cyan}${this.colors.bright}╚${line}╝${this.colors.reset}\n`)
+    originalConsoleLog(`\n${this.colors.cyan}${this.colors.bright}╔${line}╗${this.colors.reset}`)
+    originalConsoleLog(`${this.colors.cyan}${this.colors.bright}║${text.padStart(31 + text.length / 2).padEnd(60)}║${this.colors.reset}`)
+    originalConsoleLog(`${this.colors.cyan}${this.colors.bright}╚${line}╝${this.colors.reset}\n`)
   }
 
   static divider() {
-    console.log(`${this.colors.dim}${'─'.repeat(60)}${this.colors.reset}`)
+    originalConsoleLog(`${this.colors.dim}${'─'.repeat(60)}${this.colors.reset}`)
   }
 
   static success(message, data) { this.log('✅', 'green', message, data) }
@@ -245,17 +272,14 @@ class MessageHandler {
         const processingTime = ((Date.now() - startTime) / 1000).toFixed(1)
         Logger.success(`Make.com responded in ${processingTime}s`)
 
-        // ✅ FLEXIBLE RESPONSE HANDLING - Works with ANY Make.com format
         let summary = null
         
         Logger.info('Extracting summary from response...')
         
         if (typeof response.data === 'string') {
-          // Response is plain text
           summary = response.data
           Logger.info('Format: Plain text')
         } else if (response.data && typeof response.data === 'object') {
-          // Response is JSON - try common field names
           summary = response.data.summary || 
                     response.data.Body || 
                     response.data.text || 
@@ -266,7 +290,6 @@ class MessageHandler {
           if (summary) {
             Logger.info('Format: JSON object')
           } else {
-            // If none of the common fields exist, stringify entire response
             summary = JSON.stringify(response.data, null, 2)
             Logger.warn('Using entire response (no standard field found)')
           }
@@ -276,14 +299,12 @@ class MessageHandler {
           Logger.ai('AI analysis received')
           Logger.success(`Summary length: ${summary.length} characters`)
           
-          // Send summary to YOUR WhatsApp
           Logger.processing('Sending summary to your WhatsApp')
           await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
             text: this.formatSummary({ summary }, fileName, from, fileSize)
           })
           Logger.success('Summary sent to you')
 
-          // Send confirmation to user
           Logger.processing('Sending completion message to user')
           await sock.sendMessage(from, {
             text: `✅ *Analysis Complete!*\n\n` +
@@ -303,7 +324,6 @@ class MessageHandler {
                   'Please try again or contact support.'
           })
           
-          // Send debug info to you
           await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
             text: `⚠️ *Summary Extraction Failed*\n\n` +
                   `📄 ${fileName}\n` +
@@ -476,7 +496,6 @@ async function startBot() {
     sock.ev.on('creds.update', saveCreds)
     sock.ev.on('connection.update', (update) => ConnectionHandler.handleUpdate(sock, update))
 
-    // Ignore sync events
     sock.ev.on('messaging-history.set', () => {})
     sock.ev.on('chats.set', () => {})
     sock.ev.on('chats.upsert', () => {})
@@ -484,7 +503,6 @@ async function startBot() {
     sock.ev.on('contacts.upsert', () => {})
     sock.ev.on('groups.upsert', () => {})
 
-    // Handle incoming messages
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return
       if (!isConnected) return
@@ -511,12 +529,15 @@ async function startBot() {
    ═══════════════════════════════════════════════════════════ */
 
 process.on('uncaughtException', (error) => {
-  if (error.message.includes('Decrypted message')) return
+  if (error.message?.includes('Decrypted message')) return
+  if (error.message?.includes('Closing session')) return
   Logger.error('Uncaught Exception', { error: error.message })
 })
 
 process.on('unhandledRejection', (reason) => {
-  if (reason?.toString().includes('Decrypted message')) return
+  const msg = reason?.toString() || ''
+  if (msg.includes('Decrypted message')) return
+  if (msg.includes('Closing session')) return
   Logger.error('Unhandled Rejection', { reason })
 })
 
