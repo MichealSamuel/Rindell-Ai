@@ -6,7 +6,7 @@
 
 const { spawn } = require('child_process')
 
-// Comprehensive spam patterns to filter
+// Comprehensive spam patterns
 const SPAM_PATTERNS = [
   'Decrypted message',
   'Closing session',
@@ -36,19 +36,31 @@ const SPAM_PATTERNS = [
   'created:',
   'Closing open session',
   'prekey bundle',
-  'BQ0L', // Session identifiers
+  'BQ0L',
   'favor of incoming'
 ]
 
 function shouldFilter(line) {
-  return SPAM_PATTERNS.some(pattern => line.includes(pattern))
+  const trimmed = line.trim()
+  
+  // Filter spam patterns
+  if (SPAM_PATTERNS.some(pattern => line.includes(pattern))) {
+    return true
+  }
+  
+  // Filter standalone brackets/braces (JSON noise)
+  if (trimmed === '}' || 
+      trimmed === '},') {
+    return true
+  }
+  
+  return false
 }
 
 console.log('╔════════════════════════════════════════════════════════════╗')
 console.log('║                 🤖 RINDELL AI ASSISTANT v5.0               ║')
 console.log('╚════════════════════════════════════════════════════════════╝\n')
 
-// Start the bot
 const bot = spawn('node', ['index.js'], {
   cwd: __dirname,
   stdio: ['inherit', 'pipe', 'pipe'],
@@ -60,7 +72,7 @@ let buffer = ''
 bot.stdout.on('data', (data) => {
   buffer += data.toString()
   const lines = buffer.split('\n')
-  buffer = lines.pop() // Keep incomplete line in buffer
+  buffer = lines.pop()
   
   lines.forEach(line => {
     if (!shouldFilter(line) && line.trim()) {

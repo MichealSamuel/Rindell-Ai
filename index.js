@@ -8,8 +8,7 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   downloadContentFromMessage,
-  DisconnectReason,
-  makeInMemoryStore
+  DisconnectReason
 } = require('@whiskeysockets/baileys')
 
 const { Boom } = require('@hapi/boom')
@@ -234,6 +233,8 @@ class MessageHandler {
 
         let summary = null
         
+        Logger.info('Extracting summary from response...')
+        
         if (typeof response.data === 'string') {
           summary = response.data
           Logger.info('Format: Plain text')
@@ -257,7 +258,8 @@ class MessageHandler {
           Logger.ai(`AI analysis received (${summary.length} chars)`)
           
           Logger.processing('Sending summary to your WhatsApp')
-          await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
+          const myJid = sock.user?.id || CONFIG.ASSISTANT_NUMBER
+          await sock.sendMessage(myJid, {
             text: this.formatSummary({ summary }, fileName, from, fileSize)
           })
           Logger.success('Summary sent to you')
@@ -273,18 +275,31 @@ class MessageHandler {
 
         } else {
           Logger.warn('No valid summary found')
+          
           await sock.sendMessage(from, {
             text: '⚠️ Analysis completed but summary extraction failed.\n' +
                   'Please try again or contact support.'
+          })
+          
+          const myJid = sock.user?.id || CONFIG.ASSISTANT_NUMBER
+          await sock.sendMessage(myJid, {
+            text: `⚠️ *Summary Extraction Failed*\n\n` +
+                  `📄 ${fileName}\n` +
+                  `👤 From: ${from}\n\n` +
+                  `Response type: ${typeof response.data}\n` +
+                  `Response: ${JSON.stringify(response.data, null, 2).substring(0, 500)}`
           })
         }
 
       } catch (webhookError) {
         Logger.error('Make.com webhook failed', { error: webhookError.message })
+        
         await sock.sendMessage(from, {
           text: '❌ *Processing Error*\n\nSorry, there was an error analyzing your document.\nPlease try again.'
         })
-        await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
+        
+        const myJid = sock.user?.id || CONFIG.ASSISTANT_NUMBER
+        await sock.sendMessage(myJid, {
           text: `❌ *Error*\n📄 ${fileName}\n👤 ${from}\n⚠️ ${webhookError.message}`
         })
       }
@@ -384,12 +399,8 @@ async function startBot() {
         Logger.success('Bot is now listening for documents...')
         Logger.divider()
 
-        await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
-          text: `🤖 *Rindell AI v${CONFIG.VERSION} Started*\n\n` +
-                `✅ Connected to WhatsApp\n` +
-                `🕐 ${new Date().toLocaleString()}\n\n` +
-                `Ready to process documents! 📄`
-        }).catch(() => {})
+        // Startup notification disabled to avoid encryption issues
+        // Summaries will be sent when documents are processed
       }
 
       if (connection === 'close') {
@@ -443,7 +454,8 @@ process.on('SIGINT', async () => {
   
   if (sock && isConnected) {
     try {
-      await sock.sendMessage(CONFIG.ASSISTANT_NUMBER, {
+      const myJid = sock.user?.id || CONFIG.ASSISTANT_NUMBER
+      await sock.sendMessage(myJid, {
         text: `🛑 *Rindell AI v${CONFIG.VERSION} Stopped*\n\n` +
               `Session ended at ${new Date().toLocaleString()}`
       })
