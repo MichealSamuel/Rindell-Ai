@@ -1,6 +1,7 @@
 /**
  * ╔═══════════════════════════════════════════════════════════╗
  * ║              🤖 RINDELL AI ASSISTANT v5.0                 ║
+ * ║           WhatsApp Document Analysis Bot                  ║
  * ╚═══════════════════════════════════════════════════════════╝
  */
 
@@ -230,51 +231,108 @@ class MessageHandler {
 
         const processingTime = ((Date.now() - startTime) / 1000).toFixed(1)
         Logger.success(`Make.com responded in ${processingTime}s`)
-
+        
+        // ✅ COMPREHENSIVE DEBUG
+        console.log('\n========== MAKE.COM RESPONSE DEBUG ==========')
+        console.log('Response status:', response.status)
+        console.log('Response type:', typeof response.data)
+        console.log('Response is string?', typeof response.data === 'string')
+        console.log('Response is object?', typeof response.data === 'object')
+        
+        if (response.data) {
+          console.log('Response keys:', Object.keys(response.data))
+          console.log('Has summary field?', 'summary' in response.data)
+          console.log('Has Result field?', 'Result' in response.data)
+          console.log('Has text field?', 'text' in response.data)
+          console.log('Has Body field?', 'Body' in response.data)
+          console.log('\nFull response data:')
+          console.log(JSON.stringify(response.data, null, 2))
+        } else {
+          console.log('Response data is null/undefined')
+        }
+        console.log('=============================================\n')
+        
         let summary = null
         
         Logger.info('Extracting summary from response...')
         
         if (typeof response.data === 'string') {
           summary = response.data
-          Logger.info('Format: Plain text')
+          Logger.info('Format: Plain text string')
         } else if (response.data && typeof response.data === 'object') {
+          // Try ALL possible field names
           summary = response.data.summary || 
+                    response.data.Result ||
+                    response.data.result ||
                     response.data.Body || 
+                    response.data.body ||
                     response.data.text || 
                     response.data.content ||
                     response.data.message ||
-                    response.data.result
+                    response.data.response
           
           if (summary) {
             Logger.info('Format: JSON object')
+            console.log('Found summary in field:', 
+              response.data.summary ? 'summary' :
+              response.data.Result ? 'Result' :
+              response.data.result ? 'result' :
+              response.data.Body ? 'Body' :
+              response.data.body ? 'body' :
+              response.data.text ? 'text' : 'other'
+            )
           } else {
+            Logger.warn('No summary found in any expected field')
+            console.log('Available fields:', Object.keys(response.data))
+            
+            // Last resort: stringify entire response
             summary = JSON.stringify(response.data, null, 2)
-            Logger.warn('Using entire response')
+            Logger.warn('Using entire response as fallback')
           }
         }
+
+        console.log('\n========== SUMMARY CHECK ==========')
+        console.log('Summary exists?', !!summary)
+        console.log('Summary type:', typeof summary)
+        console.log('Summary length:', summary ? summary.length : 0)
+        console.log('Summary preview (first 200 chars):')
+        console.log(summary ? summary.substring(0, 200) : 'null')
+        console.log('====================================\n')
 
         if (summary && summary.length > 10) {
           Logger.ai(`AI analysis received (${summary.length} chars)`)
           
           Logger.processing('Sending summary to your WhatsApp')
+          console.log('My JID:', sock.user?.id || 'using CONFIG.ASSISTANT_NUMBER')
+          
           const myJid = sock.user?.id || CONFIG.ASSISTANT_NUMBER
-          await sock.sendMessage(myJid, {
-            text: this.formatSummary({ summary }, fileName, from, fileSize)
-          })
-          Logger.success('Summary sent to you')
+          
+          try {
+            await sock.sendMessage(myJid, {
+              text: this.formatSummary({ summary }, fileName, from, fileSize)
+            })
+            Logger.success('Summary sent to you')
+          } catch (sendError) {
+            Logger.error('Failed to send summary', { error: sendError.message })
+            console.log('Send error details:', sendError)
+          }
 
           Logger.processing('Sending completion message to user')
-          await sock.sendMessage(from, {
-            text: `✅ *Analysis Complete!*\n\n` +
-                  `📄 ${fileName}\n\n` +
-                  `Your document has been analyzed by Rindell AI.\n` +
-                  `The summary has been delivered! 🎉`
-          })
-          Logger.success('Completion message sent')
+          try {
+            await sock.sendMessage(from, {
+              text: `✅ *Analysis Complete!*\n\n` +
+                    `📄 ${fileName}\n\n` +
+                    `Your document has been analyzed by Rindell AI.\n` +
+                    `The summary has been delivered! 🎉`
+            })
+            Logger.success('Completion message sent')
+          } catch (sendError) {
+            Logger.error('Failed to send completion message', { error: sendError.message })
+          }
 
         } else {
           Logger.warn('No valid summary found')
+          console.log('Summary value:', summary)
           
           await sock.sendMessage(from, {
             text: '⚠️ Analysis completed but summary extraction failed.\n' +
@@ -286,7 +344,6 @@ class MessageHandler {
             text: `⚠️ *Summary Extraction Failed*\n\n` +
                   `📄 ${fileName}\n` +
                   `👤 From: ${from}\n\n` +
-                  `Response type: ${typeof response.data}\n` +
                   `Response: ${JSON.stringify(response.data, null, 2).substring(0, 500)}`
           })
         }
@@ -395,12 +452,10 @@ async function startBot() {
         Logger.success('WhatsApp connected successfully!')
         Logger.info(isNewLogin ? 'New device linked' : 'Reconnected with saved session')
         Logger.info(`Version: ${CONFIG.VERSION}`)
+        Logger.info(`Bot User JID: ${sock.user?.id || 'Unknown'}`)
         Logger.info(`Summaries sent to: ${CONFIG.ASSISTANT_NUMBER}`)
         Logger.success('Bot is now listening for documents...')
         Logger.divider()
-
-        // Startup notification disabled to avoid encryption issues
-        // Summaries will be sent when documents are processed
       }
 
       if (connection === 'close') {
@@ -445,23 +500,12 @@ async function startBot() {
    PROCESS HANDLERS
    ═══════════════════════════════════════════════════════════ */
 
-process.on('uncaughtException', () => {}) // Silent
-process.on('unhandledRejection', () => {}) // Silent
+process.on('uncaughtException', () => {})
+process.on('unhandledRejection', () => {})
 
 process.on('SIGINT', async () => {
   Logger.divider()
   Logger.info('Graceful shutdown initiated')
-  
-  if (sock && isConnected) {
-    try {
-      const myJid = sock.user?.id || CONFIG.ASSISTANT_NUMBER
-      await sock.sendMessage(myJid, {
-        text: `🛑 *Rindell AI v${CONFIG.VERSION} Stopped*\n\n` +
-              `Session ended at ${new Date().toLocaleString()}`
-      })
-    } catch (err) {}
-  }
-  
   Logger.success('Shutdown complete')
   process.exit(0)
 })
