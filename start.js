@@ -7,7 +7,7 @@ const { spawn } = require('child_process')
 const path = require('path')
 
 console.log('╔════════════════════════════════════════════════════════════╗')
-console.log('║                 🤖 RINDELL AI ASSISTANT v1.0               ║')
+console.log('║                 🤖 RINDELL AI ASSISTANT v5.0               ║')
 console.log('╚════════════════════════════════════════════════════════════╝\n')
 console.log('Starting bot with spam filter...\n')
 
