@@ -1,7 +1,6 @@
 /**
  * ╔═══════════════════════════════════════════════════════════╗
  * ║              🤖 RINDELL AI ASSISTANT v5.0                 ║
- * ║           WhatsApp Document Analysis Bot                  ║
  * ╚═══════════════════════════════════════════════════════════╝
  */
 
@@ -235,84 +234,59 @@ class MessageHandler {
         let summary = null
         Logger.info('Extracting summary from response...')
 
-        // ✅ Handle JSON sent as string (Make.com behavior)
+        // ✅ PLAIN TEXT RESPONSE (Simplified)
         if (typeof response.data === 'string') {
-          console.log('Response is STRING - attempting to parse as JSON...')
-          
-          try {
-            const parsed = JSON.parse(response.data)
-            console.log('✅ Successfully parsed JSON from string')
-            console.log('Parsed keys:', Object.keys(parsed))
-            
-            summary = parsed.summary || 
-                      parsed.Result ||
-                      parsed.result ||
-                      parsed.Body || 
-                      parsed.text ||
-                      parsed.content ||
-                      parsed.message
-            
-            if (summary) {
-              Logger.info('✅ Found summary in parsed JSON')
-              console.log('Summary field used:', 
-                parsed.summary ? 'summary' :
-                parsed.Result ? 'Result' :
-                parsed.result ? 'result' :
-                parsed.Body ? 'Body' : 'other'
-              )
-            } else {
-              Logger.warn('No summary field found in parsed JSON')
-              console.log('Available fields:', Object.keys(parsed))
-            }
-          } catch (parseError) {
-            console.log('Not valid JSON, using raw string as summary')
-            summary = response.data
-          }
+          console.log('✅ Response is plain text')
+          summary = response.data.trim()
+          Logger.info(`Received ${summary.length} characters`)
           
         } else if (response.data && typeof response.data === 'object') {
-          console.log('Response is already an OBJECT')
+          console.log('Response is object (fallback)')
           
           summary = response.data.summary || 
                     response.data.Result ||
                     response.data.result ||
                     response.data.Body || 
-                    response.data.body ||
-                    response.data.text || 
-                    response.data.content ||
-                    response.data.message ||
-                    response.data.response
+                    response.data.text ||
+                    JSON.stringify(response.data)
           
-          if (summary) {
-            Logger.info('Found summary in object')
-          } else {
-            Logger.warn('No summary field found in object')
-            console.log('Available fields:', Object.keys(response.data))
-          }
+          Logger.info('Extracted from object')
         }
 
         console.log('─'.repeat(60))
-        console.log('SUMMARY CHECK:')
-        console.log('  Exists:', !!summary)
-        console.log('  Type:', typeof summary)
+        console.log('SUMMARY:')
         console.log('  Length:', summary ? summary.length : 0)
-        console.log('  Preview:', summary ? summary.substring(0, 150) + '...' : 'null')
+        console.log('  Preview:', summary ? summary.substring(0, 100).replace(/\n/g, ' ') + '...' : 'null')
         console.log('─'.repeat(60))
 
         if (summary && summary.length > 10) {
           Logger.ai(`AI analysis received (${summary.length} chars)`)
           
-          Logger.processing('Sending summary to your WhatsApp')
-          const myJid = sock.user?.id || CONFIG.ASSISTANT_NUMBER
+          // ✅ Clean and fix JID
+          let myJid = sock.user?.id || CONFIG.ASSISTANT_NUMBER
+          
+          // Remove port number if present (e.g., :38)
+          if (myJid.includes(':')) {
+            const parts = myJid.split(':')
+            myJid = parts[0] + '@' + parts[1].split('@')[1]
+          }
+          
+          // Convert old format to new
+          if (myJid.endsWith('@c.us')) {
+            myJid = myJid.replace('@c.us', '@s.whatsapp.net')
+          }
+          
           console.log('Target JID:', myJid)
           
+          Logger.processing('Sending summary to your WhatsApp')
           try {
             await sock.sendMessage(myJid, {
               text: this.formatSummary({ summary }, fileName, from, fileSize)
             })
-            Logger.success('Summary sent to you')
+            Logger.success('✅ Summary sent to you!')
           } catch (sendError) {
             Logger.error('Failed to send summary', { error: sendError.message })
-            console.log('Send error details:', sendError)
+            console.log('Send error:', sendError)
           }
 
           Logger.processing('Sending completion message to user')
@@ -323,28 +297,18 @@ class MessageHandler {
                     `Your document has been analyzed by Rindell AI.\n` +
                     `The summary has been delivered! 🎉`
             })
-            Logger.success('Completion message sent')
+            Logger.success('✅ Completion message sent!')
           } catch (sendError) {
-            Logger.error('Failed to send completion message', { error: sendError.message })
-            console.log('Send error details:', sendError)
+            Logger.error('Failed to send completion', { error: sendError.message })
           }
 
         } else {
-          Logger.warn('No valid summary found in response')
-          console.log('Response data type:', typeof response.data)
-          console.log('Response data preview:', JSON.stringify(response.data).substring(0, 200))
+          Logger.warn('No valid summary received')
+          console.log('Response data:', response.data)
           
           await sock.sendMessage(from, {
-            text: '⚠️ Analysis completed but summary extraction failed.\n' +
+            text: '⚠️ Analysis completed but no summary was received.\n' +
                   'Please try again or contact support.'
-          })
-          
-          const myJid = sock.user?.id || CONFIG.ASSISTANT_NUMBER
-          await sock.sendMessage(myJid, {
-            text: `⚠️ *Summary Extraction Failed*\n\n` +
-                  `📄 ${fileName}\n` +
-                  `👤 From: ${from}\n\n` +
-                  `Response preview: ${JSON.stringify(response.data).substring(0, 300)}`
           })
         }
 
@@ -359,21 +323,12 @@ class MessageHandler {
                 'Sorry, there was an error analyzing your document.\n' +
                 'Please try again in a moment.'
         })
-        
-        const myJid = sock.user?.id || CONFIG.ASSISTANT_NUMBER
-        await sock.sendMessage(myJid, {
-          text: `❌ *Webhook Error*\n\n` +
-                `📄 ${fileName}\n` +
-                `👤 From: ${from}\n` +
-                `⚠️ ${webhookError.message}`
-        })
       }
 
       Logger.divider()
 
     } catch (error) {
       Logger.error('Message processing failed', { error: error.message })
-      console.log('Stack trace:', error.stack)
     }
   }
 
@@ -461,8 +416,6 @@ async function startBot() {
         Logger.success('WhatsApp connected successfully!')
         Logger.info(isNewLogin ? 'New device linked' : 'Reconnected with saved session')
         Logger.info(`Version: ${CONFIG.VERSION}`)
-        Logger.info(`Bot User JID: ${sock.user?.id || 'Unknown'}`)
-        Logger.info(`Summaries sent to: ${CONFIG.ASSISTANT_NUMBER}`)
         Logger.success('Bot is now listening for documents...')
         Logger.divider()
       }
