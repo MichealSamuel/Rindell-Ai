@@ -231,36 +231,47 @@ class MessageHandler {
 
         const processingTime = ((Date.now() - startTime) / 1000).toFixed(1)
         Logger.success(`Make.com responded in ${processingTime}s`)
-        
-        // ✅ COMPREHENSIVE DEBUG
-        console.log('\n========== MAKE.COM RESPONSE DEBUG ==========')
-        console.log('Response status:', response.status)
-        console.log('Response type:', typeof response.data)
-        console.log('Response is string?', typeof response.data === 'string')
-        console.log('Response is object?', typeof response.data === 'object')
-        
-        if (response.data) {
-          console.log('Response keys:', Object.keys(response.data))
-          console.log('Has summary field?', 'summary' in response.data)
-          console.log('Has Result field?', 'Result' in response.data)
-          console.log('Has text field?', 'text' in response.data)
-          console.log('Has Body field?', 'Body' in response.data)
-          console.log('\nFull response data:')
-          console.log(JSON.stringify(response.data, null, 2))
-        } else {
-          console.log('Response data is null/undefined')
-        }
-        console.log('=============================================\n')
-        
+
         let summary = null
-        
         Logger.info('Extracting summary from response...')
-        
+
+        // ✅ Handle JSON sent as string (Make.com behavior)
         if (typeof response.data === 'string') {
-          summary = response.data
-          Logger.info('Format: Plain text string')
+          console.log('Response is STRING - attempting to parse as JSON...')
+          
+          try {
+            const parsed = JSON.parse(response.data)
+            console.log('✅ Successfully parsed JSON from string')
+            console.log('Parsed keys:', Object.keys(parsed))
+            
+            summary = parsed.summary || 
+                      parsed.Result ||
+                      parsed.result ||
+                      parsed.Body || 
+                      parsed.text ||
+                      parsed.content ||
+                      parsed.message
+            
+            if (summary) {
+              Logger.info('✅ Found summary in parsed JSON')
+              console.log('Summary field used:', 
+                parsed.summary ? 'summary' :
+                parsed.Result ? 'Result' :
+                parsed.result ? 'result' :
+                parsed.Body ? 'Body' : 'other'
+              )
+            } else {
+              Logger.warn('No summary field found in parsed JSON')
+              console.log('Available fields:', Object.keys(parsed))
+            }
+          } catch (parseError) {
+            console.log('Not valid JSON, using raw string as summary')
+            summary = response.data
+          }
+          
         } else if (response.data && typeof response.data === 'object') {
-          // Try ALL possible field names
+          console.log('Response is already an OBJECT')
+          
           summary = response.data.summary || 
                     response.data.Result ||
                     response.data.result ||
@@ -272,40 +283,27 @@ class MessageHandler {
                     response.data.response
           
           if (summary) {
-            Logger.info('Format: JSON object')
-            console.log('Found summary in field:', 
-              response.data.summary ? 'summary' :
-              response.data.Result ? 'Result' :
-              response.data.result ? 'result' :
-              response.data.Body ? 'Body' :
-              response.data.body ? 'body' :
-              response.data.text ? 'text' : 'other'
-            )
+            Logger.info('Found summary in object')
           } else {
-            Logger.warn('No summary found in any expected field')
+            Logger.warn('No summary field found in object')
             console.log('Available fields:', Object.keys(response.data))
-            
-            // Last resort: stringify entire response
-            summary = JSON.stringify(response.data, null, 2)
-            Logger.warn('Using entire response as fallback')
           }
         }
 
-        console.log('\n========== SUMMARY CHECK ==========')
-        console.log('Summary exists?', !!summary)
-        console.log('Summary type:', typeof summary)
-        console.log('Summary length:', summary ? summary.length : 0)
-        console.log('Summary preview (first 200 chars):')
-        console.log(summary ? summary.substring(0, 200) : 'null')
-        console.log('====================================\n')
+        console.log('─'.repeat(60))
+        console.log('SUMMARY CHECK:')
+        console.log('  Exists:', !!summary)
+        console.log('  Type:', typeof summary)
+        console.log('  Length:', summary ? summary.length : 0)
+        console.log('  Preview:', summary ? summary.substring(0, 150) + '...' : 'null')
+        console.log('─'.repeat(60))
 
         if (summary && summary.length > 10) {
           Logger.ai(`AI analysis received (${summary.length} chars)`)
           
           Logger.processing('Sending summary to your WhatsApp')
-          console.log('My JID:', sock.user?.id || 'using CONFIG.ASSISTANT_NUMBER')
-          
           const myJid = sock.user?.id || CONFIG.ASSISTANT_NUMBER
+          console.log('Target JID:', myJid)
           
           try {
             await sock.sendMessage(myJid, {
@@ -328,11 +326,13 @@ class MessageHandler {
             Logger.success('Completion message sent')
           } catch (sendError) {
             Logger.error('Failed to send completion message', { error: sendError.message })
+            console.log('Send error details:', sendError)
           }
 
         } else {
-          Logger.warn('No valid summary found')
-          console.log('Summary value:', summary)
+          Logger.warn('No valid summary found in response')
+          console.log('Response data type:', typeof response.data)
+          console.log('Response data preview:', JSON.stringify(response.data).substring(0, 200))
           
           await sock.sendMessage(from, {
             text: '⚠️ Analysis completed but summary extraction failed.\n' +
@@ -344,20 +344,28 @@ class MessageHandler {
             text: `⚠️ *Summary Extraction Failed*\n\n` +
                   `📄 ${fileName}\n` +
                   `👤 From: ${from}\n\n` +
-                  `Response: ${JSON.stringify(response.data, null, 2).substring(0, 500)}`
+                  `Response preview: ${JSON.stringify(response.data).substring(0, 300)}`
           })
         }
 
       } catch (webhookError) {
-        Logger.error('Make.com webhook failed', { error: webhookError.message })
+        Logger.error('Make.com webhook failed', { 
+          error: webhookError.message,
+          code: webhookError.code
+        })
         
         await sock.sendMessage(from, {
-          text: '❌ *Processing Error*\n\nSorry, there was an error analyzing your document.\nPlease try again.'
+          text: '❌ *Processing Error*\n\n' +
+                'Sorry, there was an error analyzing your document.\n' +
+                'Please try again in a moment.'
         })
         
         const myJid = sock.user?.id || CONFIG.ASSISTANT_NUMBER
         await sock.sendMessage(myJid, {
-          text: `❌ *Error*\n📄 ${fileName}\n👤 ${from}\n⚠️ ${webhookError.message}`
+          text: `❌ *Webhook Error*\n\n` +
+                `📄 ${fileName}\n` +
+                `👤 From: ${from}\n` +
+                `⚠️ ${webhookError.message}`
         })
       }
 
@@ -365,6 +373,7 @@ class MessageHandler {
 
     } catch (error) {
       Logger.error('Message processing failed', { error: error.message })
+      console.log('Stack trace:', error.stack)
     }
   }
 
