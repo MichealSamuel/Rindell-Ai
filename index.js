@@ -1,6 +1,8 @@
 /**
  * ╔═══════════════════════════════════════════════════════════╗
  * ║              🤖 RINDELL AI ASSISTANT v5.0                 ║
+ * ║           WhatsApp Document Analysis Bot                  ║
+ * ║         WITH PERMANENT SESSION MANAGEMENT                 ║
  * ╚═══════════════════════════════════════════════════════════╝
  */
 
@@ -39,6 +41,39 @@ const CONFIG = {
     'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PowerPoint',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'Excel Spreadsheet',
     'text/plain': 'Text File'
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   KEEP-ALIVE SYSTEM (Prevents Session Expiration)
+   ═══════════════════════════════════════════════════════════ */
+
+let keepAliveInterval = null
+
+function startKeepAlive(sock) {
+  // Clear any existing interval
+  if (keepAliveInterval) clearInterval(keepAliveInterval)
+  
+  // Ping WhatsApp every 30 minutes to keep session alive
+  keepAliveInterval = setInterval(async () => {
+    if (isConnected) {
+      try {
+        await sock.sendPresenceUpdate('available')
+        console.log('[Keep-Alive] Session refreshed at', new Date().toLocaleTimeString())
+      } catch (error) {
+        console.log('[Keep-Alive] Ping failed:', error.message)
+      }
+    }
+  }, 30 * 60 * 1000) // 30 minutes
+  
+  Logger.info('Keep-alive system activated (30min intervals)')
+}
+
+function stopKeepAlive() {
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval)
+    keepAliveInterval = null
+    Logger.info('Keep-alive system stopped')
   }
 }
 
@@ -376,18 +411,20 @@ async function startBot() {
     sock = makeWASocket({
       auth: state,
       logger,
-      printQRInTerminal: false,
+      printQRInTerminal: true,  // ✅ Enable QR display
       syncFullHistory: false,
-      markOnlineOnConnect: false,
+      markOnlineOnConnect: true,  // ✅ Mark as online
       getMessage: async () => undefined,
       browser: ['Rindell AI', 'Chrome', '120.0'],
       shouldIgnoreJid: (jid) => jid === 'status@broadcast' || jid?.includes('broadcast'),
       defaultQueryTimeoutMs: 60000,
       connectTimeoutMs: 60000,
-      keepAliveIntervalMs: 30000,
+      keepAliveIntervalMs: 30000,  // ✅ Keep connection alive
       emitOwnEvents: false,
       fireInitQueries: false,
-      generateHighQualityLinkPreview: false
+      generateHighQualityLinkPreview: false,
+      retryRequestDelayMs: 500,
+      maxMsgRetryCount: 3
     })
 
     sock.ev.on('creds.update', saveCreds)
@@ -395,13 +432,20 @@ async function startBot() {
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr, isNewLogin } = update
 
+      // ✅ FORCE QR CODE DISPLAY
       if (qr) {
-        Logger.divider()
-        Logger.info('QR Code Ready - Scan with WhatsApp')
-        Logger.divider()
+        console.log('\n\n')
+        console.log('╔════════════════════════════════════════════════════════════╗')
+        console.log('║                  SCAN QR CODE WITH WHATSAPP                ║')
+        console.log('╚════════════════════════════════════════════════════════════╝')
+        console.log('\n')
+        
         qrcode.generate(qr, { small: true })
-        Logger.info('QR code expires in 30 seconds')
-        Logger.divider()
+        
+        console.log('\n')
+        console.log('⏱️  QR code expires in 30 seconds - scan quickly!')
+        console.log('📱 Open WhatsApp > Settings > Linked Devices > Link a Device')
+        console.log('\n')
       }
 
       if (connection === 'connecting') {
@@ -418,24 +462,101 @@ async function startBot() {
         Logger.info(`Version: ${CONFIG.VERSION}`)
         Logger.success('Bot is now listening for documents...')
         Logger.divider()
+        
+        // ✅ START KEEP-ALIVE SYSTEM
+        startKeepAlive(sock)
       }
 
       if (connection === 'close') {
         isConnected = false
+        stopKeepAlive()
+        
         const statusCode = (lastDisconnect?.error instanceof Boom)
           ? lastDisconnect.error.output?.statusCode
           : 500
 
+        Logger.warn('Connection closed', { code: statusCode })
+
+        // ✅ HANDLE DIFFERENT DISCONNECT REASONS
+        const reasons = {
+          401: 'Session expired - need new QR',
+          403: 'Account banned or restricted',
+          428: 'Connection lost - will retry',
+          440: 'Session timed out - need new QR',
+          500: 'Server error - will retry',
+          503: 'Service unavailable - will retry'
+        }
+
+        const reason = reasons[statusCode] || 'Unknown reason'
+        Logger.info(`Reason: ${reason}`)
+
+        // ✅ EXPIRED SESSION - DELETE AND RESTART
+        if (statusCode === 401 || statusCode === 440) {
+          Logger.error('Session expired after inactivity')
+          Logger.info('Deleting expired session...')
+          
+          try {
+            if (fs.existsSync(CONFIG.AUTH_DIR)) {
+              fs.rmSync(CONFIG.AUTH_DIR, { recursive: true, force: true })
+              Logger.success('Session deleted')
+            }
+          } catch (err) {
+            Logger.warn('Could not auto-delete session')
+          }
+          
+          Logger.info('Restarting to generate new QR code...')
+          setTimeout(() => {
+            reconnectAttempts = 0
+            startBot()
+          }, 3000)
+          return
+        }
+
+        // ✅ TOO MANY FAILURES - FORCE LOGOUT
+        if (reconnectAttempts >= 5) {
+          Logger.error('Too many reconnection failures')
+          Logger.info('Forcing logout and clean restart...')
+          
+          try {
+            if (fs.existsSync(CONFIG.AUTH_DIR)) {
+              fs.rmSync(CONFIG.AUTH_DIR, { recursive: true, force: true })
+              Logger.success('Session deleted')
+            }
+          } catch (err) {
+            Logger.warn('Please manually delete auth/ folder')
+          }
+          
+          Logger.info('Restarting... new QR code will appear')
+          setTimeout(() => {
+            reconnectAttempts = 0
+            startBot()
+          }, 3000)
+          return
+        }
+
+        // ✅ NORMAL RECONNECTION
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut
 
         if (shouldReconnect) {
           reconnectAttempts++
           const delay = Math.min(5000 * reconnectAttempts, 30000)
-          Logger.processing(`Reconnecting in ${delay / 1000}s... (Attempt ${reconnectAttempts})`)
+          Logger.processing(`Reconnecting in ${delay / 1000}s... (Attempt ${reconnectAttempts}/5)`)
           setTimeout(() => startBot(), delay)
         } else {
-          Logger.error('Logged out - Restart required')
-          Logger.info('Delete auth/ folder and restart')
+          Logger.error('Logged out manually - need new QR code')
+          Logger.info('Deleting session...')
+          
+          try {
+            if (fs.existsSync(CONFIG.AUTH_DIR)) {
+              fs.rmSync(CONFIG.AUTH_DIR, { recursive: true, force: true })
+            }
+          } catch (err) {}
+          
+          Logger.info('Restarting...')
+          setTimeout(() => {
+            reconnectAttempts = 0
+            startBot()
+          }, 3000)
         }
       }
     })
@@ -468,7 +589,24 @@ process.on('unhandledRejection', () => {})
 process.on('SIGINT', async () => {
   Logger.divider()
   Logger.info('Graceful shutdown initiated')
+  
+  // Stop keep-alive
+  stopKeepAlive()
+  
+  // Close socket properly
+  if (sock) {
+    try {
+      await sock.end()
+    } catch (err) {}
+  }
+  
   Logger.success('Shutdown complete')
+  process.exit(0)
+})
+
+process.on('SIGTERM', () => {
+  Logger.info('SIGTERM received')
+  stopKeepAlive()
   process.exit(0)
 })
 
