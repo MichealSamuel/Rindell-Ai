@@ -1,8 +1,7 @@
 /**
  * ╔═══════════════════════════════════════════════════════════╗
  * ║              🤖 RINDELL AI ASSISTANT v5.0                 ║
- * ║           WhatsApp Document Analysis Bot                  ║
- * ║         WITH PERMANENT SESSION MANAGEMENT                 ║
+ * ║              WhatsApp Document Analysis Bot               ║
  * ╚═══════════════════════════════════════════════════════════╝
  */
 
