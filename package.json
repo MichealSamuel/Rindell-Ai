@@ -1,4 +1,5 @@
 {
+    "$schema": "https://json.schemastore.org/package",
   "name": "rindell-ai-assistant",
   "version": "5.0.0",
   "description": "Rindell AI v5.0 - WhatsApp Document Analysis Assistant with Signature Italic Quote Format",
