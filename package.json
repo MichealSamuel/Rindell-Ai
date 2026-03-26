@@ -1,7 +1,7 @@
 {
   "name": "rindell-ai-assistant",
   "version": "5.0.0",
-  "description": "Rindell AI v5.0 - WhatsApp Document Analysis Assistant",
+  "description": "Rindell AI v5.0 - WhatsApp Document Analysis Assistant with Signature Italic Quote Format",
   "main": "start.js",
   "scripts": {
     "start": "node start.js",
@@ -14,17 +14,18 @@
     "document-analysis",
     "claude",
     "automation",
-    "rindell"
+    "rindell",
+    "baileys"
   ],
-  "author": "Rindell AI",
+  "author": "Rexy",
   "license": "MIT",
   "dependencies": {
-    "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^6.7.8",
-    "axios": "^1.6.7",
-    "form-data": "^4.0.0",
+    "@hapi/boom": "^10.0.1",
     "pino": "^8.17.2",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode-terminal": "^0.12.0",
+    "axios": "^1.6.7",
+    "form-data": "^4.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.3"

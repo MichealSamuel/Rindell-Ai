@@ -1,7 +1,7 @@
 /**
  * ╔═══════════════════════════════════════════════════════════╗
  * ║              🤖 RINDELL AI ASSISTANT v5.0                 ║
- * ║              WhatsApp Document Analysis Bot               ║
+ * ║             WhatsApp Document Analysis Bot                ║
  * ╚═══════════════════════════════════════════════════════════╝
  */
 
@@ -367,24 +367,30 @@ class MessageHandler {
   }
 
   static formatSummary(data, fileName, from, fileSize) {
-    return `╔═══════════════════════════════════════╗
-║     📚 RINDELL AI ANALYSIS REPORT     ║
-╚═══════════════════════════════════════╝
-
-📄 *File Details*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Name: ${fileName}
-- Size: ${fileSize}
-- From: ${from.split('@')[0]}
-- Time: ${new Date().toLocaleString()}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-${data.summary}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ *Powered by Rindell AI v${CONFIG.VERSION}*
-🤖 Analysis by Claude via Make.com`
+    // ✅ RINDELL'S SIGNATURE ITALIC QUOTE FORMAT
+    const lines = [
+      '╔═══════════════════════════════════════╗',
+      '║     📚 RINDELL AI ANALYSIS REPORT     ║',
+      '╚═══════════════════════════════════════╝',
+      '',
+      '📄 *File Details*',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      `• Name: ${fileName}`,
+      `• Size: ${fileSize}`,
+      `• From: ${from.split('@')[0]}`,
+      `• Time: ${new Date().toLocaleString()}`,
+      '',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      '',
+      data.summary,
+      '',
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+      `✅ *Powered by Rindell AI v${CONFIG.VERSION}*`,
+      '🤖 Analysis by Claude via Make.com'
+    ]
+    
+    // Convert each line to italic quote format (> _text_)
+    return lines.map(line => `> _${line}_`).join('\n')
   }
 }
 
@@ -410,15 +416,15 @@ async function startBot() {
     sock = makeWASocket({
       auth: state,
       logger,
-      printQRInTerminal: true,  // ✅ Enable QR display
+      // printQRInTerminal removed (deprecated)
       syncFullHistory: false,
-      markOnlineOnConnect: true,  // ✅ Mark as online
+      markOnlineOnConnect: true,
       getMessage: async () => undefined,
       browser: ['Rindell AI', 'Chrome', '120.0'],
       shouldIgnoreJid: (jid) => jid === 'status@broadcast' || jid?.includes('broadcast'),
       defaultQueryTimeoutMs: 60000,
       connectTimeoutMs: 60000,
-      keepAliveIntervalMs: 30000,  // ✅ Keep connection alive
+      keepAliveIntervalMs: 30000,
       emitOwnEvents: false,
       fireInitQueries: false,
       generateHighQualityLinkPreview: false,
@@ -431,7 +437,7 @@ async function startBot() {
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr, isNewLogin } = update
 
-      // ✅ FORCE QR CODE DISPLAY
+      // ✅ DISPLAY QR CODE
       if (qr) {
         console.log('\n\n')
         console.log('╔════════════════════════════════════════════════════════════╗')
@@ -480,6 +486,7 @@ async function startBot() {
         const reasons = {
           401: 'Session expired - need new QR',
           403: 'Account banned or restricted',
+          405: 'Connection method rejected - need new QR',
           428: 'Connection lost - will retry',
           440: 'Session timed out - need new QR',
           500: 'Server error - will retry',
@@ -489,10 +496,10 @@ async function startBot() {
         const reason = reasons[statusCode] || 'Unknown reason'
         Logger.info(`Reason: ${reason}`)
 
-        // ✅ EXPIRED SESSION - DELETE AND RESTART
-        if (statusCode === 401 || statusCode === 440) {
-          Logger.error('Session expired after inactivity')
-          Logger.info('Deleting expired session...')
+        // ✅ EXPIRED/REJECTED SESSION - DELETE AND RESTART
+        if (statusCode === 401 || statusCode === 405 || statusCode === 440) {
+          Logger.error('Session invalid - clearing and restarting')
+          Logger.info('Deleting session files...')
           
           try {
             if (fs.existsSync(CONFIG.AUTH_DIR)) {
@@ -503,18 +510,18 @@ async function startBot() {
             Logger.warn('Could not auto-delete session')
           }
           
-          Logger.info('Restarting to generate new QR code...')
+          Logger.info('Restarting... QR code will appear')
           setTimeout(() => {
             reconnectAttempts = 0
             startBot()
-          }, 3000)
+          }, 2000)
           return
         }
 
         // ✅ TOO MANY FAILURES - FORCE LOGOUT
-        if (reconnectAttempts >= 5) {
+        if (reconnectAttempts >= 3) {
           Logger.error('Too many reconnection failures')
-          Logger.info('Forcing logout and clean restart...')
+          Logger.info('Forcing clean restart...')
           
           try {
             if (fs.existsSync(CONFIG.AUTH_DIR)) {
@@ -529,7 +536,7 @@ async function startBot() {
           setTimeout(() => {
             reconnectAttempts = 0
             startBot()
-          }, 3000)
+          }, 2000)
           return
         }
 
@@ -538,11 +545,11 @@ async function startBot() {
 
         if (shouldReconnect) {
           reconnectAttempts++
-          const delay = Math.min(5000 * reconnectAttempts, 30000)
-          Logger.processing(`Reconnecting in ${delay / 1000}s... (Attempt ${reconnectAttempts}/5)`)
+          const delay = Math.min(5000 * reconnectAttempts, 20000)
+          Logger.processing(`Reconnecting in ${delay / 1000}s... (Attempt ${reconnectAttempts}/3)`)
           setTimeout(() => startBot(), delay)
         } else {
-          Logger.error('Logged out manually - need new QR code')
+          Logger.error('Logged out manually')
           Logger.info('Deleting session...')
           
           try {
@@ -555,7 +562,7 @@ async function startBot() {
           setTimeout(() => {
             reconnectAttempts = 0
             startBot()
-          }, 3000)
+          }, 2000)
         }
       }
     })
